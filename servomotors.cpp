@@ -44,17 +44,26 @@ const int pinSensor9 = A3;          // Pinul analogic pentru senzorul asociat se
 // Funcție de măsurare a curentului (servo10)
 /////////////////////////////////////////
 float measureCurrent(int pin) {
-  float sum = 0;
-  const int samples = 20;
-  for (int i = 0; i < samples; i++) {
-    sum += analogRead(pin);
-    delay(1);
+  static uint8_t readIndex = 0;
+  static int readings[5] = {0};  // Rolling buffer
+  static unsigned long lastReadTime = 0;
+  const unsigned long readInterval = 250; // Microseconds between reads
+
+  if (micros() - lastReadTime >= readInterval) {
+    readings[readIndex] = analogRead(pin);
+    readIndex = (readIndex + 1) % 5;
+    lastReadTime = micros();
   }
-  float avg = sum / samples;
-  // Conversie folosind formula specificată
+
+  // Calculate simple average of last 5 readings
+  long sum = 0;
+  for (uint8_t i = 0; i < 5; i++) {
+    sum += readings[i];
+  }
+  float avg = sum / 5.0;
+
   return fabs((2.5 - (avg * 5.0 / 1024.0)) / 0.185);
 }
-
 /////////////////////////////////////////
 // Funcția de calibrare pentru servo10
 /////////////////////////////////////////
@@ -70,8 +79,9 @@ void runCalibration() {
   // Faza 1: Creștere de la default la limitPhase1 cu pași de 3°
   for (int angle = servo10.defaultAngle; angle <= limitPhase1; angle += angleStepIncrease) {
     myServo10.write(angle);
-    delay(10);
+   
     float currentVal = measureCurrent(servo10.currentSensorPin);
+     delay(15);
     if (currentVal > safeCurrentThreshold)
       consecutiveOver4A++;
     else
@@ -88,9 +98,11 @@ void runCalibration() {
   
   // Faza 2: De la limitPhase1 la limitPhase2 – înregistrarea valorii maxime de curent
   for (int angle = limitPhase1; angle <= limitPhase2; angle += angleStepIncrease) {
+    
     myServo10.write(angle);
-    delay(10);
     float currentVal = measureCurrent(servo10.currentSensorPin);
+    delay(15);
+    
     if (currentVal > maxMeasuredCurrent)
       maxMeasuredCurrent = currentVal;
     
@@ -106,8 +118,9 @@ void runCalibration() {
   // Faza 3: De la limitPhase2 la unghiul maxim (maxAngle10) – doar măsurare
   for (int angle = limitPhase2; angle <= maxAngle10; angle += angleStepIncrease) {
     myServo10.write(angle);
-    delay(10);
     float currentVal = measureCurrent(servo10.currentSensorPin);
+    delay(15);
+    
     
     if (currentVal > emergencyCurrentThreshold)
       consecutiveOver6A++;
@@ -149,38 +162,54 @@ void runCalibration() {
 /////////////////////////////////////////
 // Funcția de mișcare pentru servo10
 /////////////////////////////////////////
+/////////////////////////////////////////
+// Funcția de mișcare pentru servo10 (cu afișare timp în caz de FAIL)
+/////////////////////////////////////////
 int moveServo10(uint8_t state) {
+  const uint8_t moveStep = 3;       // move in steps of 3 degrees
+  const unsigned long moveDelay = 25; // 25ms delay between steps
+  const uint8_t allowedOverCurrentReadings = 3;
+  
+  static unsigned long lastMoveTime = 0;
+  static unsigned long startMoveTime = 0;
+  static uint8_t overCurrentCounter = 0;
+
+  myServo10.attach(servo10.controlPin);
+
   if (state == 0) {
-    // Deplasare spre poziția default (3°), reducând în pași de 3°
-    for (int angle = currentAngle10; angle > servo10.defaultAngle; angle -= 3) {
-      myServo10.write(angle);
-      delay(15);
-      currentAngle10 = angle;
-    }
-    myServo10.write(servo10.defaultAngle);
-    currentAngle10 = servo10.defaultAngle;
-    return currentAngle10;
+    // RETRACT towards defaultAngle
+  for (int angle = currentAngle10; angle > servo10.defaultAngle; angle -= 3) {
+        myServo10.write(angle);
+        delay(10);
+        currentAngle10 = angle;
+      }
+      myServo10.write(servo10.defaultAngle);
+      currentAngle10 = servo10.defaultAngle;
+      return currentAngle10;
   }
   else if (state == 1) {
     // Mișcare spre un unghi mai mare (până la ~157°) cu verificare curent
     for (int angle = currentAngle10; angle <= 157; angle += 3) {
       myServo10.write(angle);
-      delay(25);
       float currentVal = measureCurrent(servo10.currentSensorPin);
-      showVoltage(currentVal); // adaugă după citire
+      delay(15);
+  
+    
       
       // Dacă, în intervalul 40°–144°, curentul depășește calibMaxCurrent,
       // retragere la poziția default (3°)
-      if (angle >= 40 && angle <= 144 && currentVal > calibMaxCurrent) {
-        for (int ret = angle; ret > servo10.defaultAngle; ret -= 3) {
+      if (angle >= 35 && angle <= 144 && currentVal > calibMaxCurrent) {
+        for (int ret = angle; ret > servo10.defaultAngle; ret -= 5) {
           myServo10.write(ret);
-          delay(20);
+          delay(10);
           currentAngle10 = ret;
         }
         myServo10.write(servo10.defaultAngle);
         currentAngle10 = servo10.defaultAngle;
         return currentAngle10;
       }
+      
+      showVoltage(currentVal); // adaugă după citire
       
       // Dacă, în intervalul 145°–157°, curentul depășește calibMaxCurrent,
       // se oprește mișcarea și se returnează unghiul curent
@@ -306,113 +335,163 @@ void initServo() {
 // setup() și loop()
 /////////////////////////////////////////
 
-void calibrare_reed() {
-  const int sweepStart = 3;
-  const int sweepEnd = 160;
-  const int sweepStep = 3;
-  const int tolerance = 10; // ±10 grade în jurul unghiului găsit
-  const int passes = 3;     // 3 măsurători de timp
 
-  int firstDetectedAngle = -1;
+void calibrare_reed() {
+  const uint8_t sweepStart=3;
+  const uint8_t moveStep = 3;
+  const unsigned long moveDelay = 25; // same as moveServo10()
+  const uint8_t passes = 3;
+  const int tolerance = 10; // ±10°
+  const float maxVariationSec = 0.5; // 0.5 sec max difference allowed
+  const float timeSafetyFactor = 1.05; // +5% buffer
+
+  int detectedAngle = -1;
   unsigned long measuredTimes[passes];
   uint8_t timeCount = 0;
 
   myServo10.attach(servo10.controlPin);
 
-  // ======== Pas 1: Detectare unghi reed =========
-  myServo10.write(sweepStart);
-  delay(500);
+  // Step 1: Move to default 3°
+  moveServo10(0);
+  delay(500); // let it stabilize
 
-  for (int angle = sweepStart; angle <= sweepEnd; angle += sweepStep) {
-    myServo10.write(angle);
-    float currentVal = measureCurrent(servo10.currentSensorPin);
+  // Step 2: Sweep to find the reed
+  currentAngle10 = startAngle;
+  unsigned long lastMoveTime = millis();
+  
+  bool reedFound = false;
+  
+  unsigned long startSweepTime = millis();
+  while (currentAngle10 <= 157) {
+    if (millis() - lastMoveTime >= moveDelay) {
+      currentAngle10 += moveStep;
+      if (currentAngle10 > 157) currentAngle10 = 157;
+      myServo10.write(currentAngle10);
+      lastMoveTime = millis();
 
-    if (currentVal > 5.0) {
-      myServo10.write(sweepStart);
-      myServo10.detach();
-      return; // Protecție overcurrent
-    }
-
-    delay(20);
-
-    if (digitalRead(REED_SENSOR_PIN) == HIGH) {
-      firstDetectedAngle = angle;
-      showServoCode(firstDetectedAngle);
-      delay(1000);
-      break;
-    }
-  }
-
-  if (firstDetectedAngle == -1) {
-    // Dacă nu a fost detectat nimic
-    myServo10.write(sweepStart);
-    myServo10.detach();
-    return;
-  }
-
-  // ======== Pas 2: Măsurare timp în fereastră ±10° =========
-
-  while (timeCount < passes) {
-    myServo10.write(sweepStart);
-    delay(500);
-
-    unsigned long startMillis = millis();
-    bool detected = false;
-
-    for (int angle = sweepStart; angle <= sweepEnd; angle += sweepStep) {
-      myServo10.write(angle);
       float currentVal = measureCurrent(servo10.currentSensorPin);
+      
+      if (digitalRead(REED_SENSOR_PIN) == HIGH) {
+        detectedAngle = currentAngle10;
+        reedFound = true;
+        break;
+      }
+    }
+  }
 
-      if (currentVal > 5.0) {
-        myServo10.write(sweepStart);
-        myServo10.detach();
-        return;
+  if (!reedFound) {
+    moveServo10(0); // return to safe
+    myServo10.detach();
+    return; // reed not found, abort
+  }
+
+  // Setup sweep window
+  int windowMin = detectedAngle - tolerance;
+  int windowMax = detectedAngle + tolerance;
+  if (windowMin < sweepStart) windowMin = sweepStart;
+  if (windowMax > 157) windowMax = 157;
+
+  bool stableTiming = false;
+
+  // Step 3: Time measurements
+  while (!stableTiming) {
+    for (uint8_t pass = 0; pass < passes; pass++) {
+      // Reset to start
+      moveServo10(0);
+      delay(500);
+
+      currentAngle10 = sweepStart;
+      unsigned long startTime = millis();
+      bool detected = false;
+      lastMoveTime = millis();
+
+      while (currentAngle10 <= 157) {
+        if (millis() - lastMoveTime >= moveDelay) {
+          currentAngle10 += moveStep;
+          if (currentAngle10 > 157) currentAngle10 = 157;
+          myServo10.write(currentAngle10);
+          lastMoveTime = millis();
+
+          float currentVal = measureCurrent(servo10.currentSensorPin);
+
+          if (currentAngle10 >= windowMin && currentAngle10 <= windowMax) {
+            if (digitalRead(REED_SENSOR_PIN) == HIGH) {
+              measuredTimes[pass] = millis() - startTime;
+              detected = true;
+              break;
+            }
+          }
+        }
       }
 
-      delay(20);
+      if (!detected) {
+        measuredTimes[pass] = 99999; // Big fake number to mark failure
+      }
+    }
 
-      // Doar dacă suntem în fereastra de interes
-      if (angle >= (firstDetectedAngle - tolerance) && angle <= (firstDetectedAngle + tolerance)) {
-        if (digitalRead(REED_SENSOR_PIN) == HIGH) {
-          measuredTimes[timeCount] = millis() - startMillis;
-          showVoltage(measuredTimes[timeCount] / 1000.0);
-          delay(1500);
-          detected = true;
+    // Step 4: Check measurements stability
+    stableTiming = true;
+    for (uint8_t i = 0; i < passes; i++) {
+      for (uint8_t j = i + 1; j < passes; j++) {
+        unsigned long diff = abs((long)measuredTimes[i] - (long)measuredTimes[j]);
+        if (diff > (unsigned long)(maxVariationSec * 1000)) {
+          stableTiming = false;
           break;
         }
       }
+      if (!stableTiming) break;
     }
 
-    if (!detected) {
-      // Dacă nu detectezi, măcar nu rămâne blocat
-      measuredTimes[timeCount] = 9999;
+    if (!stableTiming) {
+      // Try again until stable
+      delay(500);
     }
-
-    timeCount++;
   }
 
-  myServo10.write(sweepStart);
+  // Step 5: Calculate average
+  unsigned long sum = 0;
+  for (uint8_t i = 0; i < passes; i++) {
+    sum += measuredTimes[i];
+  }
+  unsigned long avgTime = sum / passes;
+  
+  avgTime = (unsigned long)(avgTime * timeSafetyFactor); // +5%
+
+  reedDetectedAngleGlobal = detectedAngle;
+  reedTimeLimitMS = avgTime;
+
+  showServoCode(reedDetectedAngleGlobal);
+  showVoltage(reedTimeLimitMS / 1000.0);
+
+  moveServo10(0); // Return to start
   delay(500);
   myServo10.detach();
-
-  // ======== Pas 3: Selectăm timpul maxim şi aplicăm +1% =========
-  unsigned long maxTime = 0;
-  for (uint8_t i = 0; i < passes; i++) {
-    if (measuredTimes[i] > maxTime && measuredTimes[i] != 9999) {
-      maxTime = measuredTimes[i];
-    }
-  }
-
-  if (maxTime > 0) {
-    maxTime = (unsigned long)(maxTime * 1.01); // Adăugăm 1%
-    showVoltage(maxTime / 1000.0);
-    delay(2000);
-  }
-
-  reedDetectedAngleGlobal = firstDetectedAngle;
-reedDetectionTimeMS = maxTime;
-
 }
 
 
 
+
+
+
+void testareServo() {
+  const int numarTeste = 10;
+
+  myServo10.attach(servo10.controlPin); // Atașează servo (dacă nu e deja)
+
+  for (int i = 0; i < numarTeste; i++) {
+    // Mutare la poziția 0
+    moveServo10(0);
+    delay(3000); // Pauză ca să nu se scuture ca un chihuahua
+
+    // Mutare la poziția 1
+    moveServo10(1);
+    delay(3000); // Pauză din nou
+
+  } //sfarsit for
+
+  // Opțional: îl aduci iar la poziția default la final
+  moveServo10(0);
+  delay(500);
+
+  myServo10.detach(); // Detach dacă vrei să îi dai liber
+} //sfarsit functie testareServo

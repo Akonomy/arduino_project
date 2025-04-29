@@ -29,8 +29,8 @@ unsigned long startMillis = 0; // Start pentru cronometrat timpul
 int reeddetectedAngle = -1;       // Unghiul unde am detectat
 
 // Inițializare la început de fișier
-int reedDetectedAngleGlobal = -1;
-unsigned long reedDetectionTimeMS = 0;
+int reedDetectedAngleGlobal = 87;
+unsigned long reedTimeLimitMS = 1300;
 
 
 

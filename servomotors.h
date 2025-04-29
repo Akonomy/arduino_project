@@ -15,5 +15,5 @@ float measureCurrent(int pin);
 void runCalibration();
 
 void calibrare_reed();
-
+void testareServo();
 #endif

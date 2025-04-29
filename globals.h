@@ -47,7 +47,7 @@ extern int reeddetectedAngle ;       // Unghiul unde am detectat
 // Adaugă astea global, în globals.h sau înainte de setup():
 
 extern int reedDetectedAngleGlobal; // unghiul unde a fost găsit reed-ul
-extern unsigned long reedDetectionTimeMS; // timpul (ms) până la reed (+1%)
+extern unsigned long reedTimeLimitMS; // timpul (ms) până la reed (+1%)
 
 
 
