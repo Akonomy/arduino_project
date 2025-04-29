@@ -378,7 +378,18 @@ if (isServoCommand && servoId != 255) {
 
     // Sar peste PCA9685 logică
     return;
+} // end f conditie if masca servo 9 sau 10
+
+
+else if (mask == 0x0800) {  // 1 << 11
+  adjust_box();  // funcția ta deja implementată
+  lastMask = mask;
+  lastNumValues = 1;
+  lastValues[0] = localValues[0];
+  lastReceiveTime = currentTime;
+  return;
 }
+
 
 
 
@@ -457,5 +468,43 @@ if (isServoCommand && servoId != 255) {
   showVoltage(batteryVoltage);
 
   
-  delay(100);
+
 }
+
+
+
+void adjust_box() {
+  const uint16_t MASK_INAINTE = 0x0055; // înainte
+  const uint16_t MASK_STANGA_FATA = 0x0009; // roți față spre dreapta
+  const uint16_t MASK_DREAPTA_FATA = 0x0006; // roți față spre stânga
+  const uint16_t MASK_STOP = 0x0000; // stop
+
+  const uint16_t viteza_tick = 2500; // impuls scurt
+
+  // Bop înainte
+  pwm.setMultiplePinsSame(MASK_INAINTE, viteza_tick);
+  delay(60); // 50 ms
+  pwm.setMultiplePinsSame(MASK_STOP, 0);
+  delay(50); // Pauză mică să nu fie prea *spicy*
+
+  // Tap față dreapta
+  pwm.setMultiplePinsSame(MASK_STANGA_FATA, viteza_tick);
+  delay(80);
+  pwm.setMultiplePinsSame(MASK_STOP, 0);
+  delay(50);
+
+  // Tap față stânga
+  pwm.setMultiplePinsSame(MASK_DREAPTA_FATA, viteza_tick);
+  delay(80);
+  pwm.setMultiplePinsSame(MASK_STOP, 0);
+  delay(50);
+
+    pwm.setMultiplePinsSame(MASK_INAINTE, viteza_tick);
+  delay(60); // 50 ms
+  pwm.setMultiplePinsSame(MASK_STOP, 0);
+  delay(50); // Pauză mică să nu fie prea *spicy*
+}
+
+
+
+

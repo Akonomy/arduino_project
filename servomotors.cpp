@@ -214,6 +214,10 @@ int moveServo10(uint8_t state) {
       // Dacă, în intervalul 145°–157°, curentul depășește calibMaxCurrent,
       // se oprește mișcarea și se returnează unghiul curent
       if (angle >= 145 && angle <= 157 && currentVal > calibMaxCurrent) {
+
+        
+        myServo10.write(angle+2);
+  
         currentAngle10 = angle;
         return angle;
       }
@@ -241,13 +245,13 @@ int moveServo9(uint8_t state) {
     // Deplasare spre 3° (scădere) cu pași de 3° și verificare senzor (analogRead pe A3)
     for (int angle = currentAngle9; angle >= 3; angle -= 3) {
       myServo9.write(angle);
-      delay(20);
+      delay(15);
       int sensorValue = analogRead(pinSensor9);
       if (sensorValue > 10) {  
         // Retragere imediată: de la unghiul curent către 170° în pași de 3°
         for (int retract = angle; retract <= 170; retract += 3) {
           myServo9.write(retract);
-          delay(20);
+          delay(15);
         }
         currentAngle9 = 170;
         return currentAngle9;
@@ -258,7 +262,7 @@ int moveServo9(uint8_t state) {
     if (finalCheck > 10) {
       for (int retract = 3; retract <= 170; retract += 3) {
         myServo9.write(retract);
-        delay(20);
+        delay(15);
       }
       currentAngle9 = 170;
       return currentAngle9;

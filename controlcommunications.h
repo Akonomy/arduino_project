@@ -19,4 +19,6 @@
 void setupControlSystem();  // to replace original setup()
 void updateControlSystem(); // to replace original loop()
 
+void adjust_box();
+
 #endif
