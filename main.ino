@@ -9,7 +9,7 @@ void setup() {
   //calibrare_reed();
 
   setupControlSystem();    // PCA9685, I2C, display, etc.
-  seteazaServo(9, 1);
+  seteazaServo(9, 0);
 
   
 }

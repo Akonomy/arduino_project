@@ -64,6 +64,78 @@ float measureCurrent(int pin) {
 
   return fabs((2.5 - (avg * 5.0 / 1024.0)) / 0.185);
 }
+
+
+
+
+
+/////////////////////////////////////////
+// Funcția de mișcare pentru servo9
+/////////////////////////////////////////
+int moveServo9(uint8_t state) {
+  if (state == 0) {
+    // Deplasare spre 177° (creștere)
+    for (int angle = currentAngle9; angle <= 177; angle++) {
+      myServo9.write(angle);
+      delay(10);
+    }
+    currentAngle9 = 177;
+    return currentAngle9;
+  }
+  else if (state == 1) {
+    // Deplasare spre 3° (scădere) cu pași de 3° și verificare senzor (analogRead pe A3)
+    for (int angle = currentAngle9; angle >= 3; angle -= 3) {
+      myServo9.write(angle);
+      delay(15);
+      int sensorValue = analogRead(pinSensor9);
+      if (sensorValue > 10) {  
+        // Retragere imediată: de la unghiul curent către 170° în pași de 3°
+        for (int retract = angle; retract <= 170; retract += 3) {
+          myServo9.write(retract);
+          delay(15);
+        }
+        currentAngle9 = 170;
+        return currentAngle9;
+      }
+    }
+    delay(100);
+    int finalCheck = analogRead(pinSensor9);
+    if (finalCheck > 10) {
+      for (int retract = 3; retract <= 170; retract += 3) {
+        myServo9.write(retract);
+        delay(15);
+      }
+      currentAngle9 = 170;
+      return currentAngle9;
+    }
+    currentAngle9 = 3;
+    return currentAngle9;
+  }
+  return currentAngle9;
+}
+
+
+
+
+float computePonderedCalibration(float base, float measured) {
+    float diff = measured - base;
+
+    if (diff < 0) {
+        // Sub baza -> scădere proporțională, dar crescătoare în influență
+        float absDiff = -diff;
+        float weightNew = constrain(0.5 + absDiff * 1.5, 0.3, 0.7);  // între 0.2 și 0.8
+        float weightBase = 1.0 - weightNew;
+        return (weightBase * base) + (weightNew * measured);
+    } else {
+        // Peste baza -> foarte mică influență, să nu explodeze
+        float weightNew = constrain(0.01 + diff * 0.005, 0.01, 0.1); // max 0.1
+        float weightBase = 1.0 - weightNew;
+        return (weightBase * base) + (weightNew * measured);
+    }
+}
+
+
+
 /////////////////////////////////////////
 // Funcția de calibrare pentru servo10
 /////////////////////////////////////////
@@ -71,8 +143,18 @@ void runCalibration() {
   int consecutiveOver4A = 0;
   int consecutiveOver6A = 0;
   float maxMeasuredCurrent = 0.0;
+
+  uint8_t succes=0;
   
   // Pasul 1: Mută servo10 la poziția default
+ 
+  while( (!succes)  ==  1) {
+     succes = moveServo9(1);
+     if (succes==1){
+      break;
+     }
+     delay(500);
+  }
   myServo10.write(servo10.defaultAngle);
   delay(500);
   
@@ -151,7 +233,17 @@ void runCalibration() {
   delay(500);
   
   // Salvează valoarea maximă măsurată
-  calibMaxCurrent = maxMeasuredCurrent+0.14;
+ // Salvează valoarea maximă măsurată + bias
+  float newMeasured = maxMeasuredCurrent + 0.14;
+
+  // Dacă valoarea e clar prea mică sau absurd de mare, o ignorăm
+
+
+  // Media ponderată între valoarea "de bază" și ce am măsurat
+  // 90% veche, 10% nouă — pentru stabilitate și conservatorism
+  
+  calibMaxCurrent = computePonderedCalibration(2.995, newMeasured) ;
+
   showVoltage(calibMaxCurrent);
   delay(1000);
   
@@ -187,18 +279,36 @@ int moveServo10(uint8_t state) {
       currentAngle10 = servo10.defaultAngle;
       return currentAngle10;
   }
+
   else if (state == 1) {
+
+    delay(200);//un pic sa se stabilizeze curentu
     // Mișcare spre un unghi mai mare (până la ~157°) cu verificare curent
+    float maxCurrent = 0;
     for (int angle = currentAngle10; angle <= 157; angle += 3) {
       myServo10.write(angle);
       float currentVal = measureCurrent(servo10.currentSensorPin);
-      delay(15);
-  
+      delay(9);
+   
+       if (angle >= 45 && angle <= 144 && currentVal > maxCurrent) {
+
+        maxCurrent=currentVal;
+
+      }
     
       
       // Dacă, în intervalul 40°–144°, curentul depășește calibMaxCurrent,
       // retragere la poziția default (3°)
-      if (angle >= 35 && angle <= 144 && currentVal > calibMaxCurrent) {
+      if (angle >= 40 && angle <= 145 && currentVal > calibMaxCurrent) {
+
+        delay(30);
+        currentVal = measureCurrent(servo10.currentSensorPin);
+
+   
+
+        if (currentVal> calibMaxCurrent) {
+
+
         for (int ret = angle; ret > servo10.defaultAngle; ret -= 5) {
           myServo10.write(ret);
           delay(10);
@@ -207,6 +317,45 @@ int moveServo10(uint8_t state) {
         myServo10.write(servo10.defaultAngle);
         currentAngle10 = servo10.defaultAngle;
         return currentAngle10;
+      }
+      }
+      
+      showVoltage(maxCurrent); // adaugă după citire
+      
+      // Dacă, în intervalul 145°–157°, curentul depășește calibMaxCurrent,
+      // se oprește mișcarea și se returnează unghiul curent
+      if (angle >= 146 && angle <= 157 && currentVal > calibMaxCurrent) {
+
+        
+        myServo10.write(angle+2);
+  
+        currentAngle10 = angle;
+        return angle;
+      }
+      currentAngle10 = angle;
+    }
+
+     showVoltage(maxCurrent); // adaugă după citire
+     delay(500);
+    return currentAngle10;
+  } //end else if state 1
+
+  else if (state == 4) {
+
+    // Mișcare spre un unghi mai mare (până la ~157°) cu verificare curent
+    for (int angle = currentAngle10; angle <= 157; angle += 3) {
+      myServo10.write(angle);
+      float currentVal = measureCurrent(servo10.currentSensorPin);
+      delay(9);
+  
+    
+      
+      // Dacă, în intervalul 40°–144°, curentul depășește calibMaxCurrent,
+      // retragere la poziția default (3°)
+      if (angle >= 45 && angle <= 144 && currentVal > calibMaxCurrent) {
+
+        calibMaxCurrent=currentVal;
+
       }
       
       showVoltage(currentVal); // adaugă după citire
@@ -223,55 +372,19 @@ int moveServo10(uint8_t state) {
       }
       currentAngle10 = angle;
     }
+    delay(1000);
+    
     return currentAngle10;
-  }
+  } //end else if state 1
+
+
+
+
+
+
   return currentAngle10;
 }
 
-/////////////////////////////////////////
-// Funcția de mișcare pentru servo9
-/////////////////////////////////////////
-int moveServo9(uint8_t state) {
-  if (state == 0) {
-    // Deplasare spre 177° (creștere)
-    for (int angle = currentAngle9; angle <= 177; angle++) {
-      myServo9.write(angle);
-      delay(10);
-    }
-    currentAngle9 = 177;
-    return currentAngle9;
-  }
-  else if (state == 1) {
-    // Deplasare spre 3° (scădere) cu pași de 3° și verificare senzor (analogRead pe A3)
-    for (int angle = currentAngle9; angle >= 3; angle -= 3) {
-      myServo9.write(angle);
-      delay(15);
-      int sensorValue = analogRead(pinSensor9);
-      if (sensorValue > 10) {  
-        // Retragere imediată: de la unghiul curent către 170° în pași de 3°
-        for (int retract = angle; retract <= 170; retract += 3) {
-          myServo9.write(retract);
-          delay(15);
-        }
-        currentAngle9 = 170;
-        return currentAngle9;
-      }
-    }
-    delay(100);
-    int finalCheck = analogRead(pinSensor9);
-    if (finalCheck > 10) {
-      for (int retract = 3; retract <= 170; retract += 3) {
-        myServo9.write(retract);
-        delay(15);
-      }
-      currentAngle9 = 170;
-      return currentAngle9;
-    }
-    currentAngle9 = 3;
-    return currentAngle9;
-  }
-  return currentAngle9;
-}
 
 /////////////////////////////////////////
 // Funcția generală seteazaServo(servo, state)
@@ -288,7 +401,7 @@ int seteazaServo(uint8_t servo, uint8_t state) {
     myServo10.attach(servo10.controlPin);
     result = moveServo10(state);
 
-    if ((state == 1 && result > 130) || (state == 0 && result < 10)) {
+    if ((state == 1 && result > 130) || (state == 0 && result < 10) ) {
       return 1;  // condition met
     } else {
       return 0;  // condition failed

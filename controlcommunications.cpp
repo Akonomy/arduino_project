@@ -50,6 +50,7 @@ void requestEvent() {
 }
 
 
+
 void receiveEvent(int numBytes) {
   if (numBytes < 2) return; // Trebuie să avem cel puțin 2 octeți pentru mască
 
@@ -63,7 +64,6 @@ void receiveEvent(int numBytes) {
     if (mask & (1 << i))
       activeCount++;
   }
-
   int remainingBytes = numBytes - 2;
   if (remainingBytes % 2 != 0) return;  // Număr impar de octeți – date invalide
   uint8_t numValuesReceived = remainingBytes / 2;
@@ -116,6 +116,12 @@ void receiveEvent(int numBytes) {
   interrupts();
 }
 
+
+
+
+
+
+
 // ================== TM1637 wir Măsurători ADC ==================
 // Pinii pentru TM1637 sunt mutați pe 11 (CLK) și 12 (DIO)
 TM1637Display display(11, 12);
@@ -123,14 +129,79 @@ TM1637Display display(11, 12);
 // Parametri pentru măsurători ADC
 const int numarMasuratori = 5;                  // Numărul de citiri efectuate
 const unsigned long intrevalMasurare = 100;     // Interval între citiri (ms)
-// Intervalul de măsurători este acum 5 minute (300.000 ms)
-const unsigned long intervalTotal = 300000;      
+// Intervalul de măsurători este acum 16 minute (1000.000 ms)
+const unsigned long intervalTotal = 1000000;      
 
 // Variabile globale pentru măsurători ADC
 unsigned long ultimulSetMasuratori = 0;
 
 
+// FUNTIE MANUAL OVERRIDE
+
+
+/**
+ * Funcție blocking pentru setarea manuală a tensiunii cu debounce rapid (20 ms)
+ * și ieșire după 2 s de stare stabilă.
+ */
+float manualVoltageSelection() {
+  float Avoltage = 7.5;
+  float AminVoltage = 6.7;
+  float AmaxVoltage = 8.2;
+
+  unsigned long AlastTransitionTime = millis();
+  int AlastButtonState = digitalRead(MANUAL_OVERWRITE);
+  bool AvalueUpdated = true;
+
+  showVoltage(Avoltage);  // Arată tensiunea inițială
+
+  while (true) {
+    int currentButtonState = digitalRead(MANUAL_OVERWRITE);
+    showVoltage(10.33);
+    delay(10);
+    
+    // Detect transition LOW → HIGH
+    if (currentButtonState == HIGH ) {
+      Avoltage += 0.1;
+      if (Avoltage > AmaxVoltage) {
+        Avoltage = AminVoltage;
+      }
+      showVoltage(Avoltage);
+      delay(500);
+      showVoltage(55.99);
+      delay(100);
+      AlastTransitionTime = millis();
+    }
+
+    AlastButtonState = currentButtonState;
+
+    // Dacă au trecut 2.5 secunde fără apăsări → finalizează
+    if (millis() - AlastTransitionTime >= 2500) {
+      return Avoltage;
+    }
+
+    delay(5);
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
 // ================== Funcții de măsurare ADC și siguranță ==================
+
+
+
+
+
+
+
+
 // Efectuează 5 măsurători cu 100ms interval și actualizează 'ultimaMedia'
 void efectueazaMasuratori() {
   int masuratori[numarMasuratori];
@@ -192,6 +263,9 @@ void measurementCycle() {
   // Efectuează o măsurătoare
   efectueazaMasuratori();
   float measuredVoltage = ultimaMedia * 0.0180;
+  if (measuredVoltage>9){
+    measuredVoltage=7.12;
+  }
   
   // Dacă tensiunea variază prea mult de la valoarea anterioară (ex. scade cu mai mult de 0.5V)
   // sau este sub limita critică (6.6V), se intră în modul de siguranță.
@@ -217,6 +291,12 @@ void measurementCycle() {
   
   // Dacă tensiunea s-a normalizat (de exemplu, peste 6.6V), se iese din modul de siguranță
   if (batteryVoltage >= 6.6) {
+    safeMode = false;
+    digitalWrite(LOW_BATTERY_LED, LOW);
+  }
+
+    if (batteryVoltage >= 8.5) {
+    batteryVoltage=7.19;
     safeMode = false;
     digitalWrite(LOW_BATTERY_LED, LOW);
   }
@@ -246,10 +326,6 @@ void setupControlSystem() {
   pwm.begin();
   pwm.setPWMFreq(100);
   
-  // Inițializare afișaj TM1637 (pe pini 11 și 12)
-  
-
-  
   // Inițializare variabile pentru pachetele I²C
   lastMask = 0;
   lastNumValues = 0;
@@ -262,7 +338,45 @@ void setupControlSystem() {
 
 // ================== Loop ==================
 void updateControlSystem() {
+
+  unsigned long now = millis();
+  static unsigned long manualTimer = 0;
+  static int manualState = LOW;
+
+
+static unsigned long MANUAL_lastCheckTime = 0;
+const unsigned long MANUAL_checkInterval = 75; // ms – pentru protecția nervilor procesorului
+
+int readPin = digitalRead(MANUAL_OVERWRITE);
+
+if (now - MANUAL_lastCheckTime >= MANUAL_checkInterval) {
+  MANUAL_lastCheckTime = now;
+
+  if (readPin == HIGH && manualState == LOW) {
+    // Intrare instantă în modul manual fără delay emoțional
+    showVoltage(1.09);
+    delay(500);  // Înainte să intrăm în zona de selecție
+
+    float newV = manualVoltageSelection();
+    batteryVoltage = newV;
+    prevBatteryVoltage = newV;
+
+    manualState = HIGH;
+    manualTimer = now;
+  } 
+  else if (readPin != manualState) {
+    manualState = readPin;
+  }
+}
+
+
+
+
   unsigned long currentTime = millis();
+
+
+
+
   
   // ---------- Procesare evenimente I²C și actualizare PCA9685 ----------
   // Dacă nu suntem în modul de siguranță și nu se efectuează măsurători,
@@ -357,6 +471,11 @@ if (isServoCommand && servoId != 255) {
 
         break;
 
+      case 4:
+        // Execută mișcarea normală
+        lastServoResponse = seteazaServo(servoId, state);
+        break;
+
       default:
         // Valoare necunoscută, ignorăm
         lastServoResponse = 105; // 104 not found
@@ -382,7 +501,7 @@ if (isServoCommand && servoId != 255) {
 
 
 else if (mask == 0x0800) {  // 1 << 11
-  adjust_box();  // funcția ta deja implementată
+  adjust_box();  // ajustare mecanică
   lastMask = mask;
   lastNumValues = 1;
   lastValues[0] = localValues[0];

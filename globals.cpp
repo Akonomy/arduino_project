@@ -15,7 +15,7 @@ bool measurementInProgress = false;
 
 int currentAngle10 = 3;
 int currentAngle9 = 177;
-float calibMaxCurrent = 0.0;
+float calibMaxCurrent = 2.73;
 
 
 
