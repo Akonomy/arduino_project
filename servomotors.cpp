@@ -149,7 +149,7 @@ void runCalibration() {
   // Pasul 1: Mută servo10 la poziția default
  
   while( (!succes)  ==  1) {
-     succes = moveServo9(1);
+     succes = moveServo9(0);
      if (succes==1){
       break;
      }
@@ -242,7 +242,7 @@ void runCalibration() {
   // Media ponderată între valoarea "de bază" și ce am măsurat
   // 90% veche, 10% nouă — pentru stabilitate și conservatorism
   
-  calibMaxCurrent = computePonderedCalibration(2.995, newMeasured) ;
+  calibMaxCurrent = computePonderedCalibration(3, newMeasured) ;
 
   showVoltage(calibMaxCurrent);
   delay(1000);

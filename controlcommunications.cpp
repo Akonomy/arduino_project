@@ -476,6 +476,11 @@ if (isServoCommand && servoId != 255) {
         lastServoResponse = seteazaServo(servoId, state);
         break;
 
+      case 5:
+        calibMaxCurrent=3;
+        lastServoResponse=1;
+        break;
+
       default:
         // Valoare necunoscută, ignorăm
         lastServoResponse = 105; // 104 not found
